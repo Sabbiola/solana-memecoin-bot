@@ -172,7 +172,7 @@ class Trader:
             tx_b58 = base58.b58encode(bytes(tx)).decode()
 
             # Try Jito first
-            jito_timeout = aiohttp.ClientTimeout(total=3)
+            jito_timeout = aiohttp.ClientTimeout(total=2.5)
             max_attempts = 2
             for attempt in range(1, max_attempts + 1):
                 try:
@@ -181,12 +181,12 @@ class Trader:
                         json={"jsonrpc": "2.0", "id": 1, "method": "sendBundle", "params": [[tx_b58]]},
                         timeout=jito_timeout,
                     ) as r:
-                        res = await r.json()
+                        res = await r.json(content_type=None)
                         if "result" in res:
                             print(f"[BUY] Bundle: {res['result']}")
                             return True
                         if "error" in res:
-                            print(f"[WARN] Jito rejected bundle. Attempting RPC fallback...")
+                            logger.warning("Jito rejected bundle: %s", res["error"])
                             break
                 except (aiohttp.ClientError, asyncio.TimeoutError) as jito_err:
                     logger.warning(
@@ -196,7 +196,8 @@ class Trader:
                         jito_err,
                     )
                     if attempt < max_attempts:
-                        await asyncio.sleep(0.5 * attempt)
+                        backoff = 0.2 * attempt + random.uniform(0, 0.2)
+                        await asyncio.sleep(backoff)
                         continue
                 except Exception as jito_err:
                     logger.warning(
