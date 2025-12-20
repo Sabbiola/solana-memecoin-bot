@@ -172,25 +172,50 @@ class Trader:
             tx_b58 = base58.b58encode(bytes(tx)).decode()
 
             # Try Jito first
+            jito_timeout = aiohttp.ClientTimeout(total=3)
+            max_attempts = 2
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    async with self.session.post(
+                        JITO_URL,
+                        json={"jsonrpc": "2.0", "id": 1, "method": "sendBundle", "params": [[tx_b58]]},
+                        timeout=jito_timeout,
+                    ) as r:
+                        res = await r.json()
+                        if "result" in res:
+                            print(f"[BUY] Bundle: {res['result']}")
+                            return True
+                        if "error" in res:
+                            print(f"[WARN] Jito rejected bundle. Attempting RPC fallback...")
+                            break
+                except (aiohttp.ClientError, asyncio.TimeoutError) as jito_err:
+                    logger.warning(
+                        "Jito bundle attempt %s/%s failed (%s).",
+                        attempt,
+                        max_attempts,
+                        jito_err,
+                    )
+                    if attempt < max_attempts:
+                        await asyncio.sleep(0.5 * attempt)
+                        continue
+                except Exception as jito_err:
+                    logger.warning(
+                        "Jito bundle attempt %s/%s error (%s).",
+                        attempt,
+                        max_attempts,
+                        jito_err,
+                    )
+                break
+
+            print("[WARN] Jito unreachable or rejected. RPC Fallback...")
             try:
-                async with self.session.post(JITO_URL, json={"jsonrpc": "2.0", "id": 1, "method": "sendBundle", "params": [[tx_b58]]}) as r:
-                    res = await r.json()
-                    if "result" in res:
-                        print(f"[BUY] Bundle: {res['result']}")
-                        return True
-                    elif "error" in res:
-                        print(f"[WARN] Jito rejected bundle. Attempting RPC fallback...")
-                        # Fallback
-                        rpc_result = await self.client.send_transaction(tx)
-                        if rpc_result.value:
-                           print(f"✅ [BUY] RPC Fallback SUCCESS: {rpc_result.value}")
-                           return True
-            except Exception as jito_err:
-                 print(f"[WARN] Jito unreachable ({jito_err}). RPC Fallback...")
-                 rpc_result = await self.client.send_transaction(tx)
-                 if rpc_result.value:
-                     print(f"✅ [BUY] RPC Fallback SUCCESS: {rpc_result.value}")
-                     return True
+                rpc_result = await self.client.send_transaction(tx)
+                if rpc_result.value:
+                    print(f"✅ [BUY] RPC Fallback SUCCESS: {rpc_result.value}")
+                    return True
+            except Exception as rpc_err:
+                print(f"[ERR] RPC Fallback exception: {rpc_err}")
+                return False
 
         except Exception as e:
             print(f"[FATAL] send_jito_bundle exception: {e}")
