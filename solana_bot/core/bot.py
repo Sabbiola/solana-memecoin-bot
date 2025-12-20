@@ -1568,21 +1568,37 @@ class UniversalCopyTradeV7:
                         # Reject wash trading / tx spam / micro-buy recycling
                         # Require REAL wallet activity before CONFIRM
                         
-                        # TODO: Implement proper wallet tracking
-                        # For now, use simplified heuristic based on tx rate
-                        # A real implementation would track:
-                        # - Unique wallet addresses in last 60s
-                        # - Individual buy sizes
-                        # - Wallet recycling patterns
-                        
                         quality_passed = True
                         quality_reason = ""
-                        
-                        # Simplified quality check: require minimum tx activity
-                        # (Real: require ≥5 unique wallets >0.1 SOL OR ≥1 buy >0.5 SOL)
-                        if tx_per_sec < 0.5:  # Less than 30 tx/min
+
+                        activity = await self._get_recent_buy_activity(mint=mint, window_sec=60)
+                        unique_wallets = activity["unique_wallets"]
+                        avg_buy = activity["avg_buy_sol"]
+                        max_buy = activity["max_buy_sol"]
+                        recycled_wallets = activity["recycled_wallets"]
+                        wallets_min_buy = activity["wallets_min_buy"]
+                        buy_events = activity["buy_events"]
+
+                        # Real quality check: require ≥5 unique wallets >0.1 SOL OR ≥1 buy >0.5 SOL
+                        if buy_events == 0:
                             quality_passed = False
-                            quality_reason = f"Insufficient activity: {tx_per_sec:.2f} tx/s"
+                            quality_reason = "No recent buys detected in last 60s"
+                        elif wallets_min_buy < 5 and max_buy < 0.5:
+                            quality_passed = False
+                            quality_reason = "Insufficient real buyers"
+
+                        metrics_summary = (
+                            f"unique_wallets={unique_wallets}, "
+                            f"wallets>=0.1SOL={wallets_min_buy}, "
+                            f"avg_buy={avg_buy:.3f} SOL, "
+                            f"max_buy={max_buy:.3f} SOL, "
+                            f"recycled_wallets={recycled_wallets}, "
+                            f"buy_events={buy_events}"
+                        )
+                        if quality_reason:
+                            quality_reason = f"{quality_reason} | {metrics_summary}"
+                        else:
+                            quality_reason = metrics_summary
                         
                         if not quality_passed:
                             logger.warning(
@@ -1603,7 +1619,9 @@ class UniversalCopyTradeV7:
                             )
                             break
                         
-                        logger.info(f"✅ [{symbol}] Quality gate passed - Proceeding to CONFIRM add")
+                        logger.info(
+                            f"✅ [{symbol}] Quality gate passed - Proceeding to CONFIRM add | {quality_reason}"
+                        )
                         
                         # Execute CONFIRM add
                         success, sig = await self.convex_machine.execute_confirm_add(
@@ -1632,7 +1650,7 @@ class UniversalCopyTradeV7:
                                 )
                         else:
                             logger.warning(f"❌ [{symbol}] CONFIRM add failed, staying in scout")
-                        
+
                         break  # Exit monitor either way
                 
                 # Update tracking vars
@@ -1672,6 +1690,163 @@ class UniversalCopyTradeV7:
             logger.debug(traceback.format_exc())
         
         logger.info(f"🔍 [{symbol}] Scout selection monitor ended")
+
+    async def _get_recent_buy_activity(self, mint: str, window_sec: int = 60) -> Dict[str, Any]:
+        """Fetch recent buy activity for a mint within a time window."""
+        summary = {
+            "unique_wallets": 0,
+            "avg_buy_sol": 0.0,
+            "max_buy_sol": 0.0,
+            "recycled_wallets": 0,
+            "wallets_min_buy": 0,
+            "buy_events": 0,
+        }
+
+        if not self.client:
+            return summary
+
+        def _extract_value(response: Any) -> Optional[Any]:
+            if response is None:
+                return None
+            if hasattr(response, "value"):
+                return response.value
+            if isinstance(response, dict):
+                return response.get("result") or response.get("value")
+            return None
+
+        now = int(time.time())
+        try:
+            signatures_resp = await self.client.get_signatures_for_address(
+                Pubkey.from_string(mint),
+                limit=50
+            )
+            signatures_value = _extract_value(signatures_resp) or []
+        except Exception as exc:
+            logger.warning(f"⚠️ Failed to fetch signatures for {mint}: {exc}")
+            return summary
+
+        recent_signatures = [
+            entry for entry in signatures_value
+            if entry and entry.get("blockTime") and entry["blockTime"] >= now - window_sec
+        ]
+
+        if not recent_signatures:
+            return summary
+
+        buy_sizes: List[float] = []
+        wallet_buy_counts: Dict[str, int] = {}
+        wallets_min_buy: set = set()
+
+        for entry in recent_signatures:
+            signature = entry.get("signature")
+            if not signature:
+                continue
+
+            try:
+                tx_resp = await self.client.get_transaction(
+                    Signature.from_string(signature),
+                    encoding="jsonParsed",
+                    max_supported_transaction_version=0
+                )
+                tx_value = _extract_value(tx_resp)
+            except Exception as exc:
+                logger.debug(f"Failed to fetch transaction {signature}: {exc}")
+                continue
+
+            if not tx_value:
+                continue
+
+            meta = tx_value.get("meta") or {}
+            message = (tx_value.get("transaction") or {}).get("message") or {}
+            account_keys = message.get("accountKeys") or []
+
+            key_list: List[str] = []
+            signers: set = set()
+            for key in account_keys:
+                if isinstance(key, dict):
+                    pubkey = key.get("pubkey")
+                    if pubkey:
+                        key_list.append(pubkey)
+                        if key.get("signer"):
+                            signers.add(pubkey)
+                elif isinstance(key, str):
+                    key_list.append(key)
+
+            pre_balances = meta.get("preBalances") or []
+            post_balances = meta.get("postBalances") or []
+            sol_deltas: Dict[str, float] = {}
+            for idx, pubkey in enumerate(key_list):
+                if idx < len(pre_balances) and idx < len(post_balances):
+                    sol_deltas[pubkey] = (pre_balances[idx] - post_balances[idx]) / 1e9
+
+            def token_amount(balance: Dict[str, Any]) -> float:
+                ui_amount = (balance.get("uiTokenAmount") or {}).get("uiAmount")
+                if ui_amount is not None:
+                    return float(ui_amount)
+                amount = (balance.get("uiTokenAmount") or {}).get("amount")
+                decimals = (balance.get("uiTokenAmount") or {}).get("decimals", 0)
+                if amount is not None:
+                    try:
+                        return int(amount) / (10 ** decimals)
+                    except (ValueError, TypeError):
+                        return 0.0
+                return 0.0
+
+            pre_token_balances = meta.get("preTokenBalances") or []
+            post_token_balances = meta.get("postTokenBalances") or []
+            pre_by_owner: Dict[str, float] = {}
+            post_by_owner: Dict[str, float] = {}
+
+            for bal in pre_token_balances:
+                if bal.get("mint") != mint:
+                    continue
+                owner = bal.get("owner")
+                if not owner:
+                    continue
+                pre_by_owner[owner] = token_amount(bal)
+
+            for bal in post_token_balances:
+                if bal.get("mint") != mint:
+                    continue
+                owner = bal.get("owner")
+                if not owner:
+                    continue
+                post_by_owner[owner] = token_amount(bal)
+
+            owners = set(pre_by_owner.keys()) | set(post_by_owner.keys())
+            if not owners and signers:
+                owners = set(signers)
+
+            for owner in owners:
+                delta = post_by_owner.get(owner, 0.0) - pre_by_owner.get(owner, 0.0)
+                if delta <= 0:
+                    continue
+
+                sol_spent = sol_deltas.get(owner)
+                if sol_spent is None and signers:
+                    if len(signers) == 1:
+                        sol_spent = sol_deltas.get(next(iter(signers)), 0.0)
+                    else:
+                        sol_spent = 0.0
+                if sol_spent is None:
+                    sol_spent = 0.0
+
+                sol_spent = max(sol_spent, 0.0)
+                buy_sizes.append(sol_spent)
+                wallet_buy_counts[owner] = wallet_buy_counts.get(owner, 0) + 1
+                if sol_spent >= 0.1:
+                    wallets_min_buy.add(owner)
+
+        if not buy_sizes:
+            return summary
+
+        summary["buy_events"] = len(buy_sizes)
+        summary["unique_wallets"] = len(wallet_buy_counts)
+        summary["avg_buy_sol"] = sum(buy_sizes) / len(buy_sizes)
+        summary["max_buy_sol"] = max(buy_sizes)
+        summary["recycled_wallets"] = len([w for w, c in wallet_buy_counts.items() if c > 1])
+        summary["wallets_min_buy"] = len(wallets_min_buy)
+        return summary
 
     async def _monitor_position(self, mint: str, symbol: str):
         """
@@ -2509,4 +2684,3 @@ class UniversalCopyTradeV7:
 
     def stop(self):
         self.is_running = False
-
