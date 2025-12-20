@@ -52,8 +52,7 @@ class MarketDataCollector:
         Get OHLCV candles for a token.
         
         Note: DexScreener doesn't provide historical candles directly.
-        This is a simplified implementation using current price snapshots.
-        For production, consider using Birdeye API or similar.
+        This implementation uses Birdeye API when available.
         
         Args:
             mint: Token mint address
@@ -63,9 +62,94 @@ class MarketDataCollector:
         Returns:
             List of Candle objects
         """
-        # TODO: Implement actual historical data fetching
-        # For now, return empty list (will use spot price + volume)
-        logger.warning(f"OHLCV candles not implemented yet for {mint[:8]}")
+        from ..config import BIRDEYE_API_KEY, BIRDEYE_API_URL
+
+        if not BIRDEYE_API_KEY:
+            logger.debug("BIRDEYE_API_KEY not set; skipping OHLCV fetch.")
+            return []
+
+        interval_map = {
+            "1m": ("1m", 60),
+            "5m": ("5m", 300),
+            "15m": ("15m", 900),
+            "1h": ("1H", 3600),
+            "4h": ("4H", 14400),
+            "1d": ("1D", 86400)
+        }
+        birdeye_interval, interval_seconds = interval_map.get(timeframe, ("1m", 60))
+
+        end_ts = int(time.time())
+        start_ts = end_ts - (interval_seconds * max(limit, 1))
+
+        url = f"{BIRDEYE_API_URL}/defi/ohlcv"
+        params = {
+            "address": mint,
+            "type": birdeye_interval,
+            "time_from": start_ts,
+            "time_to": end_ts
+        }
+        headers = {
+            "X-API-KEY": BIRDEYE_API_KEY,
+            "x-chain": "solana"
+        }
+
+        timeout = aiohttp.ClientTimeout(total=15)
+        retries = 3
+        backoff = 1.5
+
+        for attempt in range(1, retries + 1):
+            try:
+                async with self.session.get(url, params=params, headers=headers, timeout=timeout) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        logger.warning(
+                            "Birdeye OHLCV error %s for %s: %s",
+                            resp.status,
+                            mint[:8],
+                            error_text
+                        )
+                        if resp.status in {401, 403, 429}:
+                            return []
+                    else:
+                        data = await resp.json()
+                        if not data.get("success"):
+                            logger.warning(
+                                "Birdeye OHLCV failed for %s: %s",
+                                mint[:8],
+                                data.get("message", "Unknown error")
+                            )
+                            return []
+
+                        items = data.get("data", {}).get("items", [])
+                        if not items:
+                            logger.info("No OHLCV items for %s", mint[:8])
+                            return []
+
+                        candles = [
+                            Candle(
+                                timestamp=item.get("unixTime", 0),
+                                open=float(item.get("o", 0)),
+                                high=float(item.get("h", 0)),
+                                low=float(item.get("l", 0)),
+                                close=float(item.get("c", 0)),
+                                volume=float(item.get("v", 0))
+                            )
+                            for item in items
+                        ]
+                        return candles
+            except (asyncio.TimeoutError, aiohttp.ClientError) as exc:
+                logger.warning(
+                    "Birdeye OHLCV request failed (attempt %s/%s) for %s: %s",
+                    attempt,
+                    retries,
+                    mint[:8],
+                    exc
+                )
+
+            if attempt < retries:
+                await asyncio.sleep(backoff ** attempt)
+
+        logger.warning("OHLCV candles unavailable for %s; using spot cache fallback.", mint[:8])
         return []
     
     def calculate_rsi(self, prices: List[float], period: int = 14) -> Optional[float]:
@@ -168,11 +252,19 @@ class MarketDataCollector:
         # Keep last 20 volumes
         if len(self._volume_cache[mint]) > 20:
             self._volume_cache[mint].pop(0)
-        
+
+        candles = await self.get_ohlcv_candles(mint, limit=100)
+        if candles:
+            prices = [c.close for c in candles]
+            volumes = [c.volume for c in candles]
+        else:
+            prices = self._price_cache[mint]
+            volumes = self._volume_cache[mint]
+
         # Calculate indicators
-        rsi = self.calculate_rsi(self._price_cache[mint])
-        ema = self.calculate_ema(self._price_cache[mint])
-        avg_volume = sum(self._volume_cache[mint]) / len(self._volume_cache[mint]) if self._volume_cache[mint] else None
+        rsi = self.calculate_rsi(prices)
+        ema = self.calculate_ema(prices)
+        avg_volume = sum(volumes) / len(volumes) if volumes else None
         
         return {
             'rsi': rsi,
