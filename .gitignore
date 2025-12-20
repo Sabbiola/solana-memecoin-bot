@@ -1,0 +1,122 @@
+# ============================================
+# SECURITY - NEVER COMMIT THESE
+# ============================================
+
+# Environment variables (private keys, API keys)
+.env
+.env.*
+!.env.example
+
+# Private keys
+*.key
+*.pem
+wallet.json
+keypair.json
+
+# Logs with sensitive data
+logs/
+*.log
+
+# Database with trade history
+*.db
+*.sqlite
+*.sqlite3
+
+# Bot state files
+bot.json
+bot_data.db
+state/
+
+# Paper trading data
+paper_trades.log
+trade_metrics.json
+trade_metrics.jsonl
+
+# ============================================
+# PYTHON
+# ============================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ============================================
+# PROJECT SPECIFIC
+# ============================================
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# Screenshots/recordings
+screenshots/
+recordings/
+*.png
+*.jpg
+*.mp4
+
+# Backup files
+*.bak
+*.backup
