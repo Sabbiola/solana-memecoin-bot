@@ -1,0 +1,40 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_KEY }}
+          script: |
+            cd ~/solana
+            # Ensure it's a git repo (if not already)
+            if [ ! -d ".git" ]; then
+              git init
+              git remote add origin https://github.com/Sabbiola/solana-memecoin-bot
+              git fetch
+              git checkout -t origin/main -f
+            else
+              git pull origin main
+            fi
+            
+            # Install dependencies if they changed
+            source venv/bin/activate || true
+            pip install -r requirements.txt
+            
+            # Restart Bot
+            sudo systemctl restart solana-bot
+            
+            # Restart Dashboard Sync (if running separately)
+            # sudo systemctl restart solana-sync || true
+            
+            echo "✅ Deployment Complete"
