@@ -89,7 +89,40 @@ class PositionMonitor:
                 "trades_lost": stats.trades_lost,
                 "win_rate": win_rate,
             }
-        
+
+        # ---------------------------------------------------------
+        # SUPABASE SYNC (Push active positions to DB)
+        # ---------------------------------------------------------
+        try:
+            import supabase_sync
+            if supabase_sync.is_enabled():
+                # 1. Sync Positions
+                for pos in snapshot:
+                    # Calculate token amount (approximate from SOL size and price)
+                    price = pos.get("last_price", 0)
+                    size_sol = pos.get("size_sol", 0)
+                    token_amount = (size_sol / price) if price > 0 else 0
+                    
+                    pnl_sol = (pos.get("pnl_pct", 0) * size_sol) # Approx PnL in SOL
+                    
+                    db_position = {
+                        "token_mint": pos["mint"],
+                        "token_symbol": pos["symbol"],
+                        "amount": token_amount, # Derived token amount
+                        "avg_buy_price": pos.get("entry_price"),
+                        "current_price": pos.get("last_price"),
+                        "unrealized_pnl_sol": pnl_sol,
+                        "unrealized_pnl_percent": pos.get("pnl_pct", 0) * 100, # Convert to %
+                        "is_open": True,
+                        "updated_at": "now()"
+                    }
+                    supabase_sync.safe_upsert("positions", db_position, conflict_columns=["user_id", "token_mint"])
+
+                # 2. Sync Stats (to wallet/account table if needed, or just logs)
+                # For now, we only sync active positions as that's what the dashboard needs most.
+        except Exception as e:
+            self.logger.error(f"Supabase sync failed: {e}")
+
         self._write_snapshot(payload)
         # self.logger.info("Positions open=%d", len(snapshot))
 
