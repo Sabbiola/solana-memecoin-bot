@@ -1,4 +1,6 @@
-# Solana Memecoin Trading Bot
+# Solana Memecoin Trading Bot 🚀
+![Deploy Status](https://github.com/Sabbiola/solana-memecoin-bot/actions/workflows/deploy.yml/badge.svg)
+
 
 Autonomous trading bot scaffold for Solana memecoins with a convex, phased entry
 strategy, phase-aware rugcheck, and event-driven position management.

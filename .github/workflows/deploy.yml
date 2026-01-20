@@ -17,16 +17,23 @@ jobs:
           key: ${{ secrets.VPS_KEY }}
           password: ${{ secrets.VPS_PASSWORD }}
           script: |
+            # Create directory if it doesn't exist
+            mkdir -p ~/solana
             cd ~/solana
-            # Ensure it's a git repo (if not already)
+            
+            # Initialize git if needed
             if [ ! -d ".git" ]; then
               git init
               git remote add origin https://github.com/Sabbiola/solana-memecoin-bot
-              git fetch
-              git checkout -t origin/main -f
             else
-              git pull origin main
+              # Ensure remote URL is correct (just in case)
+              git remote set-url origin https://github.com/Sabbiola/solana-memecoin-bot
             fi
+            
+            # Fetch and Reset to match remote exactly (Force Sync)
+            git fetch origin
+            git reset --hard origin/main
+
             
             # Install dependencies if they changed
             source venv/bin/activate || true
