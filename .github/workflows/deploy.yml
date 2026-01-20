@@ -15,6 +15,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_KEY }}
+          password: ${{ secrets.VPS_PASSWORD }}
           script: |
             cd ~/solana
             # Ensure it's a git repo (if not already)
