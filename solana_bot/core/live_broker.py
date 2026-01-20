@@ -415,7 +415,16 @@ class LiveBroker:
             )
 
         if signed_sig and not await self._confirm_signature(signed_sig):
-            self.logger.warning("LIVE SELL unconfirmed: %s", signed_sig[:16])
+            self.logger.error("❌ LIVE SELL FAILED: Transaction not confirmed: %s", signed_sig[:16])
+            return TradeFill(
+                success=False,
+                side="SELL",
+                mint=mint,
+                size_sol=0.0,
+                price=0.0,
+                reason=f"{reason}_TX_UNCONFIRMED",
+                signature=signed_sig,
+            )
 
         # Calculate actual SOL received
         out_amount = int(quote.get("outAmount", 0))
