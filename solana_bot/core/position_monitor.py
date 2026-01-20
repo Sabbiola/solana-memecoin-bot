@@ -106,6 +106,7 @@ class PositionMonitor:
                     pnl_sol = (pos.get("pnl_pct", 0) * size_sol) # Approx PnL in SOL
                     
                     db_position = {
+                        "user_id": supabase_sync.get_user_id(),  # REQUIRED for RLS
                         "token_mint": pos["mint"],
                         "token_symbol": pos["symbol"],
                         "amount": token_amount, # Derived token amount

@@ -37,6 +37,7 @@ class TradeMetricsLogger:
                     total_sol = data.get("cost_sol") or data.get("proceeds_sol") or (amount * price)
                     
                     trade_record = {
+                        "user_id": supabase_sync.get_user_id(),  # REQUIRED for RLS
                         "token_mint": data["mint"],
                         "token_symbol": data.get("symbol", "???"),
                         "type": evt_type.lower(),
