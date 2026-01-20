@@ -1,0 +1,23 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies
+venv/
+__pycache__/
+*.pyc
+
+# Logs and Data
+logs/
+backtest/data.jsonl
+*.log
+*.sqlite
+*.db
+
+# Dashboard (Separate Repo)
+dashboard-new/
+dashboard/
+
+# VS Code
+.vscode/
